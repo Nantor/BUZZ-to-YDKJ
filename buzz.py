@@ -1,173 +1,257 @@
-import configparser
-import evdev
-import sys
+#!/bin/python3
+import ctypes
+import json
+import math
+import threading
 import time
 
-from evdev import ecodes
+import hid
+import keyboard
 
-
-class BuzzLogic:
-    def __init__(self, configuration: configparser.ConfigParser):
-        self._currentPlayer = None
-        self._next_press = 0
-        self._uinput = evdev.UInput()
-        self._ydkj = configuration['YDKJ']
-        self._general = configuration['general']
-        self._players = [configuration['player1'], configuration['player2'], configuration['player3']]
-        self._resetPlayer = self._next_press
-        self._nail = configuration['nailController']
-        self._is_nail = False
-
-    def button_press(self, event: evdev.InputEvent):
-        if event.type != ecodes.EV_KEY or event.value != 1:
-            return
-
-        if self._resetPlayer < event.timestamp():
-            self._currentPlayer = -1
-            # print('time past')
-
-        if self._currentPlayer < 0:
-            # the buzzer are presst
-            if event.code == self._players[0].getKeyCode('buzzer'):
-                self._press_player_key(event, 0)
-            elif event.code == self._players[1].getKeyCode('buzzer'):
-                self._press_player_key(event, 1)
-            elif event.code == self._players[2].getKeyCode('buzzer'):
-                self._press_player_key(event, 2)
-
-        elif self._next_press < event.timestamp():
-
-            if self._is_nail and self._general.getboolean('nailWithController4'):
-                if event.code == self._nail.getKeyCode('player1'):
-                    self._press_number(event, 1)
-                elif event.code == self._nail.getKeyCode('player2'):
-                    self._press_number(event, 2)
-                elif event.code == self._nail.getKeyCode('player3'):
-                    self._press_number(event, 3)
-
-            elif event.code == self._players[self._currentPlayer].getKeyCode('answer1'):
-                self._press_number(event, 1)
-            elif event.code == self._players[self._currentPlayer].getKeyCode('answer2'):
-                self._press_number(event, 2)
-            elif event.code == self._players[self._currentPlayer].getKeyCode('answer3'):
-                self._press_number(event, 3)
-            elif event.code == self._players[self._currentPlayer].getKeyCode('answer4') and not self._is_nail:
-                self._press_number(event, 4)
-
-            elif not self._is_nail:
-                if self._general.getboolean('nailWithController4'):
-                    if event.code == self._nail.getKeyCode('nail'):
-                        self._press_nail(event)
-                else:
-                    if event.code == self._players[self._currentPlayer].getKeyCode('buzzer'):
-                        self._press_nail(event)
-
-        self._uinput.syn()
-
-    def _press_player_key(self, event: evdev.InputEvent, player: int):
-        self._currentPlayer = player
-        self._uinput.write(ecodes.EV_KEY, self._ydkj.getKeyCode('player' + str(player + 1)), 1)
-        self._uinput.write(ecodes.EV_KEY, self._ydkj.getKeyCode('player' + str(player + 1)), 0)
-        self._next_press = event.timestamp() + self._general.getfloat('delay')
-        self._resetPlayer = event.timestamp() + self._general.getfloat('resetDelay')
-        # print('player ' + str(player + 1) + ' pressed (first)')
-
-    def _press_number(self, event: evdev.InputEvent, answer: int):
-        self._uinput.write(ecodes.EV_KEY, self._ydkj.getKeyCode('answer' + str(answer)), 1)
-        self._uinput.write(ecodes.EV_KEY, self._ydkj.getKeyCode('answer' + str(answer)), 0)
-        self._next_press = event.timestamp() + self._general.getfloat('delay')
-        self._resetPlayer = 0
-        self._is_nail = False
-        # print('player ' + str(self._currentPlayer + 1) + ' pressed number ' + str(answer))
-
-    def _press_nail(self, event: evdev.InputEvent):
-        self._is_nail = True
-        self._next_press = event.timestamp() + self._general.getfloat('delay')
-        self._resetPlayer = event.timestamp() + self._general.getfloat('resetDelay')
-        self._uinput.write(ecodes.EV_KEY, self._ydkj.getKeyCode('nail'), 1)
-        self._uinput.write(ecodes.EV_KEY, self._ydkj.getKeyCode('nail'), 0)
-        # print('player ' + str(self._currentPlayer + 1) + ' will nail ... ')
-
-
-_file_config = 'buzz.ini'
 _default_config = {
-    'YDKJ': {
-        'player1': 'KEY_Q',
-        'player2': 'KEY_B',
-        'player3': 'KEY_P',
-        'nail': 'KEY_N',
-        'answer1': 'KEY_1',
-        'answer2': 'KEY_2',
-        'answer3': 'KEY_3',
-        'answer4': 'KEY_4',
-    },
     'general': {
-        'nailWithController4': False,
-        'delay': .4,
-        'resetDelay': 10,
+        'blinking_times': 3,
+        'blinking_speed': .1,
     },
-    'player1': {
-        'buzzer': 'BTN_TRIGGER_HAPPY1',
-        'answer1': 'BTN_TRIGGER_HAPPY5',
-        'answer2': 'BTN_TRIGGER_HAPPY4',
-        'answer3': 'BTN_TRIGGER_HAPPY3',
-        'answer4': 'BTN_TRIGGER_HAPPY2',
+    'controller': {
+        'vendor_id': 0x054c,
+        'product_id': 0x1000,
+        '1': 'player1',
+        '2': 'player2',
+        '3': 'player3',
+        '4': 'nail',
     },
-    'player2': {
-        'buzzer': 'BTN_TRIGGER_HAPPY6',
-        'answer1': 'BTN_TRIGGER_HAPPY10',
-        'answer2': 'BTN_TRIGGER_HAPPY9',
-        'answer3': 'BTN_TRIGGER_HAPPY8',
-        'answer4': 'BTN_TRIGGER_HAPPY7',
-    },
-    'player3': {
-        'buzzer': 'BTN_TRIGGER_HAPPY11',
-        'answer1': 'BTN_TRIGGER_HAPPY15',
-        'answer2': 'BTN_TRIGGER_HAPPY14',
-        'answer3': 'BTN_TRIGGER_HAPPY13',
-        'answer4': 'BTN_TRIGGER_HAPPY12',
-    },
-
-    # only used if 'nailWithController4' set to True
-    'nailController': {
-        'nail': 'BTN_TRIGGER_HAPPY16',
-        'player1': 'BTN_TRIGGER_HAPPY20',
-        'player2': 'BTN_TRIGGER_HAPPY19',
-        'player3': 'BTN_TRIGGER_HAPPY18',
+    'YDKJ': {
+        'player1': 'q',
+        'player2': 'b',
+        'player3': 'p',
+        'nail': 'n',
+        'answer1': '1',
+        'answer2': '2',
+        'answer3': '3',
+        'answer4': '4',
     },
 }
 
+
+def _merge_config(original, override):
+    if type(override) == type(original):
+        if type(original) is dict:
+            z = {}
+            for k in original:
+                z[k] = _merge_config(original[k], override.get(k, None))
+            return z
+        else:
+            return override
+    return original
+
+
+class BuzzControllerMapper(threading.Thread):
+    __light_array = [0x00 for _ in range(8)]
+    __button_state = None
+
+    def __init__(self, configuration_file='buzz.json'):
+        super(BuzzControllerMapper, self).__init__()
+
+        # instantiate stop event
+        self._stop_event = threading.Event()
+
+        # instantiate the device class
+        if os.path.isfile(configuration_file):
+            configuration = _merge_config(_default_config, json.load(open(configuration_file)))
+        else:
+            configuration = _default_config
+
+        hid.enumerate()
+        self._dev = hid.hidapi.hid_open(configuration['controller']['vendor_id'],
+                                        configuration['controller']['product_id'], None)
+        if self._dev is None:
+            info = hid.hidapi.hid_enumerate(configuration['controller']['vendor_id'], configuration['controller']['product_id'])
+            d = info
+            while d:
+                if d.contents.as_dict()['vendor_id'] == configuration['controller']['vendor_id'] and \
+                        d.contents.as_dict()['product_id'] == configuration['controller']['product_id']:
+                    self._dev = d
+                    break
+                d = d.contents.next
+            hid.hidapi.hid_free_enumeration(info)
+
+        if self._dev is None:
+            raise ValueError('No Device found with vendor_id "{}" and product_id "{}".'.format(
+                configuration['controller']['vendor_id'], configuration['controller']['product_id']))
+
+        # set the Buzz controller in none blocking mode
+        hid.hidapi.hid_set_nonblocking(self._dev, 1)
+
+        # clear the Buzz controller LEDs
+        hid.hidapi.hid_write(self._dev, bytes(self.__light_array), len(self.__light_array))
+        data = ctypes.create_string_buffer(5)
+        hid.hidapi.hid_read(self._dev, data, 5)
+        self.__button_state = data.raw
+
+        # setup Buzz controller mapping
+        self._controller_mapping = tuple(configuration['controller'][str(i)] for i in range(1, 5))
+        self._player_controller = tuple(
+            filter(lambda i: configuration['controller'][str(i + 1)] != 'nail', (i for i in range(4)))
+        )
+        self._player_controller_button_mapping = ('{!s}', 'answer4', 'answer3', 'answer2', 'answer1')
+        self._nail_controller_button_mapping = ('nail', None, 'player3', 'player2', 'player1')
+
+        self._ydkj_buttons = configuration['YDKJ']
+        self._blinking_times = configuration['general']['blinking_times']
+        self._blinking_speed = configuration['general']['blinking_speed']
+
+    def _light_set(self, controllers, status):
+        if self._dev is None:
+            raise Exception('Controller closed')
+        s = 0xFF if status else 0x00
+        for controller in controllers:
+            self.__light_array[controller + 2] = s
+        hid.hidapi.hid_write(self._dev, bytes(self.__light_array), len(self.__light_array))
+
+    def _blink(self, controllers):
+        self._light_set(controllers, True)
+        for _ in range(self._blinking_times):
+            time.sleep(self._blinking_speed * .3)
+            self._light_set(controllers, False)
+            time.sleep(self._blinking_speed)
+            self._light_set(controllers, True)
+        time.sleep(self._blinking_speed * .3)
+        self._light_set(controllers, False)
+
+    def _flash(self, controller):
+        self._light_set((controller,), True)
+        time.sleep(self._blinking_speed * 1.3 * (self._blinking_times + 1))
+        self._light_set((controller,), False)
+
+    def _handle_buttons_pressed(self, button):
+        controller = int(math.floor(button / 5))
+        controller_button = button % 5
+
+        if self._controller_mapping[controller] is not 'nail':
+            button_type = self._player_controller_button_mapping[controller_button] \
+                .format(self._controller_mapping[controller])
+        else:
+            button_type = self._nail_controller_button_mapping[controller_button]
+
+        if button_type is not None:
+            keyboard.send(self._ydkj_buttons[button_type])
+
+            if button_type in self._controller_mapping:
+                if self._controller_mapping[controller] is 'nail':
+                    controller = self._controller_mapping.index(button_type)
+                flash = threading.Thread(name='Flash-' + str(controller), target=self._flash, args=[controller])
+                flash.start()
+            if button_type == 'nail':
+                blinking = threading.Thread(name='Nailed',
+                                            target=self._blink,
+                                            args=[self._player_controller])
+                blinking.start()
+
+    def _map_controller_buttons(self):
+        if self._dev is None:
+            raise Exception('Controller closed')
+        data = ctypes.create_string_buffer(5)
+        size = hid.hidapi.hid_read_timeout(self._dev, data, 5, 1000)
+        if size > 0 and data.raw != self.__button_state:
+            # red buzzer - controller 1
+            if self.__button_state[2] & 0x01 == 0 and data.raw[2] & 0x01 != 0:
+                self._handle_buttons_pressed(0)
+            # yellow button - controller 1
+            if self.__button_state[2] & 0x02 == 0 and data.raw[2] & 0x02 != 0:
+                self._handle_buttons_pressed(1)
+            # green button - controller 1
+            if self.__button_state[2] & 0x04 == 0 and data.raw[2] & 0x04 != 0:
+                self._handle_buttons_pressed(2)
+            # orange button - controller 1
+            if self.__button_state[2] & 0x08 == 0 and data.raw[2] & 0x08 != 0:
+                self._handle_buttons_pressed(3)
+            # blue button - controller 1
+            if self.__button_state[2] & 0x10 == 0 and data.raw[2] & 0x10 != 0:
+                self._handle_buttons_pressed(4)
+
+            # red buzzer - controller 2
+            if self.__button_state[2] & 0x20 == 0 and data.raw[2] & 0x20 != 0:
+                self._handle_buttons_pressed(5)
+            # yellow button - controller 2
+            if self.__button_state[2] & 0x40 == 0 and data.raw[2] & 0x40 != 0:
+                self._handle_buttons_pressed(6)
+            # green button - controller 2
+            if self.__button_state[2] & 0x80 == 0 and data.raw[2] & 0x80 != 0:
+                self._handle_buttons_pressed(7)
+            # orange button - controller 2
+            if self.__button_state[3] & 0x01 == 0 and data.raw[3] & 0x01 != 0:
+                self._handle_buttons_pressed(8)
+            # blue button - controller 2
+            if self.__button_state[3] & 0x02 == 0 and data.raw[3] & 0x02 != 0:
+                self._handle_buttons_pressed(9)
+
+            # red buzzer - controller 3
+            if self.__button_state[3] & 0x04 == 0 and data.raw[3] & 0x04 != 0:
+                self._handle_buttons_pressed(10)
+            # yellow button - controller 3
+            if self.__button_state[3] & 0x08 == 0 and data.raw[3] & 0x08 != 0:
+                self._handle_buttons_pressed(11)
+            # green button - controller 3
+            if self.__button_state[3] & 0x10 == 0 and data.raw[3] & 0x10 != 0:
+                self._handle_buttons_pressed(12)
+            # orange button - controller 3
+            if self.__button_state[3] & 0x20 == 0 and data.raw[3] & 0x20 != 0:
+                self._handle_buttons_pressed(13)
+            # blue button - controller 3
+            if self.__button_state[3] & 0x40 == 0 and data.raw[3] & 0x40 != 0:
+                self._handle_buttons_pressed(14)
+
+            # red buzzer - controller 4
+            if self.__button_state[3] & 0x80 == 0 and data.raw[3] & 0x80 != 0:
+                self._handle_buttons_pressed(15)
+            # yellow button - controller 4
+            if self.__button_state[4] & 0x01 == 0 and data.raw[4] & 0x01 != 0:
+                self._handle_buttons_pressed(16)
+            # green button - controller 4
+            if self.__button_state[4] & 0x02 == 0 and data.raw[4] & 0x02 != 0:
+                self._handle_buttons_pressed(17)
+            # orange button - controller 4
+            if self.__button_state[4] & 0x04 == 0 and data.raw[4] & 0x04 != 0:
+                self._handle_buttons_pressed(18)
+            # blue button - controller 4
+            if self.__button_state[4] & 0x08 == 0 and data.raw[4] & 0x08 != 0:
+                self._handle_buttons_pressed(19)
+
+            self.__button_state = data.raw
+
+    def stop(self):
+        self._stop_event.set()
+        self._dev = None
+
+    def stopped(self):
+        return self._stop_event.is_set()
+
+    def run(self):
+        hid.hidapi.hid_set_nonblocking(self._dev, 0)
+        while not self.stopped():
+            self._map_controller_buttons()
+        hid.hidapi.hid_close(self._dev)
+
+
 if __name__ == '__main__':
-    config = configparser.ConfigParser(converters={'KeyCode': lambda a: ecodes.ecodes[a]})
-    config.read_dict(_default_config)
-    config.read(_file_config)
+    import os
 
-    rol = 0
-    buzz = None
-    while buzz is None:
-        time.sleep(.1)
-        rol = (rol + 1) % 4
-        if rol == 0:
-            sys.stdout.write('\rsearching for buzz controller ... /')
-        elif rol == 1:
-            sys.stdout.write('\rsearching for buzz controller ... |')
-        elif rol == 2:
-            sys.stdout.write('\rsearching for buzz controller ... \\')
-        elif rol == 3:
-            sys.stdout.write('\rsearching for buzz controller ... -')
+    if os.getuid() != 0:
+        raise PermissionError('Need to be root for running.')
 
-        devices = [evdev.InputDevice(fn) for fn in evdev.list_devices()]
+    pid_file = 'buzz.pid'
+    buzz = BuzzControllerMapper()
 
-        for device in devices:
-            if 'buzz' in device.name.lower():
-                buzz = device
-                break
-        sys.stdout.flush()
+    with open(pid_file, 'w') as f:
+        f.write(str(os.getpid()))
 
-    print()
-    print('Controller found: ' + buzz.name)
+    buzz.start()
 
-    logic = BuzzLogic(config)
+    while buzz.is_alive() and os.path.exists(pid_file):
+        time.sleep(1)
 
-    for e in buzz.read_loop():
-        logic.button_press(e)
+    buzz.stop()
+    if os.path.exists(pid_file):
+        os.remove(pid_file)
+    buzz.join(10)
