@@ -10,6 +10,7 @@ Here you can get a little script, where you can use the playstation 2 _BUZZ_ USB
 
 ## Dependencies
 - Python >=3.5
+- "libhidapi-hidraw0" or "libhidapi-libusb0"
 - pip packages: hid, keyboard
 
 ## Features
