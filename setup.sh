@@ -12,9 +12,9 @@ VENDOR_ID=054C
 PRODUCT_ID=1000
 
 # install dependencies
-#apt update
-#apt install python3-pip libhidapi-hidraw0
-#pip3 install hid keyboard
+apt update
+apt install python3-pip libhidapi-hidraw0
+pip3 install hid keyboard
 
 # detect Buzz controller
 LSUSB=$(lsusb)
