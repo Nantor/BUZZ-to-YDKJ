@@ -1,4 +1,4 @@
-#!/bin/python3
+#!/usr/bin/env python3
 import ctypes
 import json
 import math
@@ -66,7 +66,8 @@ class BuzzControllerMapper(threading.Thread):
         self._dev = hid.hidapi.hid_open(configuration['controller']['vendor_id'],
                                         configuration['controller']['product_id'], None)
         if self._dev is None:
-            info = hid.hidapi.hid_enumerate(configuration['controller']['vendor_id'], configuration['controller']['product_id'])
+            info = hid.hidapi.hid_enumerate(configuration['controller']['vendor_id'],
+                                            configuration['controller']['product_id'])
             d = info
             while d:
                 if d.contents.as_dict()['vendor_id'] == configuration['controller']['vendor_id'] and \
@@ -236,14 +237,20 @@ class BuzzControllerMapper(threading.Thread):
 
 if __name__ == '__main__':
     import os
+    import stat
+
+    pwd = os.path.realpath(__file__)
 
     if os.getuid() != 0:
         raise PermissionError('Need to be root for running.')
 
-    pid_file = 'buzz.pid'
-    buzz = BuzzControllerMapper()
+    pid_file = os.path.join(pwd, 'buzz.pid')
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL  # Refer to "man 2 open".
+    mode = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH
 
-    with open(pid_file, 'w') as f:
+    buzz = BuzzControllerMapper(configuration_file=os.path.join(pwd, 'buzz.json'))
+
+    with os.fdopen(os.open(pid_file, flags, mode), 'w') as f:
         f.write(str(os.getpid()))
 
     buzz.start()
