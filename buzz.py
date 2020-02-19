@@ -239,19 +239,19 @@ if __name__ == '__main__':
     import os
     import stat
 
-    pwd = os.path.realpath(__file__)
+    pwd = os.path.dirname(os.path.realpath(__file__))
 
     if os.getuid() != 0:
         raise PermissionError('Need to be root for running.')
 
     pid_file = os.path.join(pwd, 'buzz.pid')
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL  # Refer to "man 2 open".
     mode = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH
 
-    buzz = BuzzControllerMapper(configuration_file=os.path.join(pwd, 'buzz.json'))
+    # buzz = BuzzControllerMapper(os.path.join(pwd, 'buzz.json'))
 
-    with os.fdopen(os.open(pid_file, flags, mode), 'w') as f:
+    with open(pid_file, 'w') as f:
         f.write(str(os.getpid()))
+    os.chmod(pid_file, mode)
 
     buzz.start()
 
